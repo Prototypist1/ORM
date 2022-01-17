@@ -20,29 +20,7 @@ namespace ORM
     //    }
     //}
 
-    public static class PlayGround {
 
-        public class Student : ISqlTable{
-            public IntSqlColumn Id => new IntSqlColumn(this, nameof(Id));
-        }
-
-        public class ClassSessionStudend: ISqlTable
-        {
-            public IntSqlColumn SudentId => new IntSqlColumn(this, nameof(SudentId));
-
-            public IntSqlColumn ClassSessionId => new IntSqlColumn(this, nameof(ClassSessionId));
-        }
-        public static void Test() {
-            Query.From<Student>()
-                 .Join<ClassSessionStudend>(x => x.Get<Student>().Id.IsEquals(x.Get<ClassSessionStudend>().SudentId))
-                 .Where(x => x.Get<Student>().Id.IsEquals( new SqlValue<int>(5)))
-                 .GroupBy(x => new { StudentId = x.Get<Student>().Id })
-                 .Having(x => x.Get<ClassSessionStudend>().Get(y => y.ClassSessionId).Count().IsGreater(new SqlValue<int>(5)))
-                 .OderBy(x => x.Get<ClassSessionStudend>().Get(y => y.ClassSessionId).Count()) // 😰 I can't pull from the grouping here, I could just do something like x.Key
-                 .Select(x => new { classesAttended = x.Get<ClassSessionStudend>().Get(y => y.ClassSessionId).Count() });
-                 
-        }
-    }
 
     public static class Sql {
         // do left and right have to be the same type?
@@ -52,24 +30,57 @@ namespace ORM
             return new EqualOperator(left, right);
         }
 
-        internal static CountOperator Count(this SqlCollection sqlCollection)
+        public static CountOperator Count(this SqlCollection sqlCollection)
         {
             return new CountOperator(sqlCollection);
         }
 
-        internal static GreaterThanOperator IsGreater(this ISqlNumericValue left, ISqlNumericValue right)
+        public static GreaterThanOperator IsGreater(this ISqlNumericValue left, ISqlNumericValue right)
         {
             return new GreaterThanOperator(left, right);
         }
     }
 
-    public class QueryCanExecute<T>
+    public class QueryCanExecute<T> : ISqlCode
     {
         private readonly QueryModel queryModel;
 
         internal QueryCanExecute(QueryModel queryModel)
         {
             this.queryModel = queryModel ?? throw new ArgumentNullException(nameof(queryModel));
+        }
+
+        public string ToCode()
+        {
+            var res =
+$@"SELECT {String.Join(", ", queryModel.select.Select(x => x.ToCode()))}
+FROM {queryModel.from.GetType().Name}";
+
+            foreach (var join in queryModel.joins ?? Array.Empty<SqlJoin>())
+            {
+                res += Environment.NewLine + $"INNER JOIN {join.table.Name} ON {join.condition.ToCode()}";
+            }
+
+            if (queryModel.where != null) {
+                res += Environment.NewLine + $"WHERE {queryModel.where.ToCode()}";
+            }
+
+            if (queryModel.groupBy != null)
+            {
+                res += Environment.NewLine + $"GROUP BY {String.Join(", ", queryModel.groupBy.Select(x => x.ToCode()))}";
+            }
+
+            if (queryModel.having != null)
+            {
+                res += Environment.NewLine + $"HAVING {queryModel.having.ToCode()}";
+            }
+
+            if (queryModel.ordersBy != null)
+            {
+                res += Environment.NewLine + $"ORDER BY {String.Join(", ", queryModel.ordersBy.Select(x => x.inner.ToCode()))}";
+            }
+
+            return res;
         }
     }
 
@@ -89,7 +100,7 @@ namespace ORM
         {
             var result = select(joinedTabls);
 
-            var copy = queryModel.Copy();
+            var copy = queryModel.ShallowCopy();
 
             copy.select = typeof(T).GetProperties()
                 .Where(prop => prop.CanRead && typeof(ISqlValue).IsAssignableFrom(prop.PropertyType))
@@ -111,7 +122,17 @@ namespace ORM
         {
             var result = orderBys.Select(element => element(joinedTabls)).ToArray();
 
-            var copy = queryModel.Copy();
+            var copy = queryModel.ShallowCopy();
+            copy.ordersBy = result;
+
+            return new QueryCanSelect<TJoinedTables>(joinedTabls, copy);
+        }
+
+        public QueryCanSelect<TJoinedTables> OderBy(params Func<TJoinedTables, ISqlValue>[] orderBys)
+        {
+            var result = orderBys.Select(element => new SqlOrder(element(joinedTabls))).ToArray();
+
+            var copy = queryModel.ShallowCopy();
             copy.ordersBy = result;
 
             return new QueryCanSelect<TJoinedTables>(joinedTabls, copy);
@@ -129,7 +150,7 @@ namespace ORM
         {
             var result = having(joinedTabls);
 
-            var copy = queryModel.Copy();
+            var copy = queryModel.ShallowCopy();
             copy.having = result;
 
             return new QueryCanGroupBy<TJoinedTables>(joinedTabls, copy);
@@ -150,7 +171,7 @@ namespace ORM
         public static QueryCanHaving<GroupedJoinedTables<TKey, T1>> GroupBy<T1, TKey>(this QueryCanGroupBy<JoinedTables<T1>> target,Func<JoinedTables<T1>, TKey> condition)
         {
             var result = condition(target.joinedTabls);
-            var copy = target.queryModel.Copy();
+            var copy = target.queryModel.ShallowCopy();
             copy.groupBy = typeof(TKey).GetProperties()
                  .Where(prop => prop.CanRead && typeof(ISqlValue).IsAssignableFrom(prop.PropertyType))
                  .Select(prop => (ISqlValue)prop.GetValue(result))
@@ -161,7 +182,7 @@ namespace ORM
         public static QueryCanHaving<GroupedJoinedTables<TKey, T1, T2>> GroupBy<T1, T2, TKey>(this QueryCanGroupBy<JoinedTables<T1, T2>> target, Func<JoinedTables<T1, T2>, TKey> condition)
         {
             var result = condition(target.joinedTabls);
-            var copy = target.queryModel.Copy();
+            var copy = target.queryModel.ShallowCopy();
             copy.groupBy = typeof(TKey).GetProperties()
                  .Where(prop => prop.CanRead && typeof(ISqlValue).IsAssignableFrom(prop.PropertyType))
                  .Select(prop => (ISqlValue)prop.GetValue(result))
@@ -179,7 +200,7 @@ namespace ORM
         {
             var result = condition(joinedTabls);
 
-            var copy = queryModel.Copy();
+            var copy = queryModel.ShallowCopy();
             copy.where = result;
 
             return new QueryCanGroupBy<TJoinedTables>(joinedTabls, copy);
@@ -189,9 +210,10 @@ namespace ORM
     public class Query {
 
         public static Query<T1> From<T1>()
-            where T1 : new()
+            where T1 : ISqlTable, new()
         {
-            return new Query<T1>(new JoinedTables<T1>(new T1()),new QueryModel());
+            var t1 = new T1();
+            return new Query<T1>(new JoinedTables<T1>(t1),new QueryModel() { from = t1});
         }
     }
 
@@ -208,9 +230,9 @@ namespace ORM
             var nextTableSet = joinedTabls.Join<T2>();
             var result = condition(nextTableSet);
 
-            var copy = queryModel.Copy();
-            var nextJoins = copy.joins.ToList();
-            nextJoins.Add(new SqlJoin(result));
+            var copy = queryModel.ShallowCopy();
+            var nextJoins = copy.joins?.ToList() ?? new List<SqlJoin>();
+            nextJoins.Add(new SqlJoin(result, typeof(T2)));
             copy.joins = nextJoins.ToArray();
 
             return new Query<T1,T2>(nextTableSet, copy);
@@ -244,7 +266,7 @@ namespace ORM
 
     public class JoinedTables<T1> : JoinedTables, ITableSetContains<T1>
     {
-        private readonly T1 t1;
+        protected readonly T1 t1;
 
         public JoinedTables(T1 t1)
         {
@@ -270,6 +292,7 @@ namespace ORM
             this.t2 = t2;
         }
 
+        internal new GroupedJoinedTables<TKey, T1, T2> Group<TKey>(TKey group) => new GroupedJoinedTables<TKey, T1, T2>(group, new SqlTableCollection<T1>(t1), new SqlTableCollection<T2>(t2));
         T2 ITableSetContains<T2>.Get() => t2;
     }
 
@@ -362,13 +385,27 @@ namespace ORM
     
     }
 
-
-    public class SqlValue<T>: ISqlValue<T>
+    public class IntSqlConstant : ISqlNumericValue
     {
-        public SqlValue(T v)
+        private readonly int value;
+
+        public IntSqlConstant(int value)
         {
+            this.value = value;
         }
+
+        public string ToCode()=> value.ToString();
+
+
+        
     }
+
+    //public class SqlValue<T>: ISqlValue<T>
+    //{
+    //    public SqlValue(T v)
+    //    {
+    //    }
+    //}
 
     public interface ISqlTable  { }
 
@@ -394,13 +431,11 @@ namespace ORM
     }
 
     public class SqlOrder {
-        private readonly ISqlValue inner;
+        public readonly ISqlValue inner;
 
         public SqlOrder(ISqlValue sp)
         {
             inner = sp ?? throw new ArgumentNullException(nameof(sp));
         }
-
-        public static implicit operator SqlOrder(ISqlValue sp) => new SqlOrder(sp);
     }
 }

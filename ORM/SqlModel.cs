@@ -4,10 +4,6 @@ using System.Text;
 
 namespace ORM
 {
-    class SqlModel
-    {
-    }
-
     class QueryModel {
         public ISqlTable from;
         public SqlJoin[] joins;
@@ -17,17 +13,30 @@ namespace ORM
         public SqlOrder[] ordersBy;
         public ISqlValue[] select;
 
-        public QueryModel Copy() { 
-        
+        // should be safe to shallwo copy
+        // all the components are read only
+        public QueryModel ShallowCopy() {
+            return new QueryModel
+            {
+                from = from,
+                joins = joins,
+                where = where,
+                groupBy = groupBy,
+                having = having,
+                ordersBy = ordersBy,
+                select = select
+            };
         }
     }
 
     class SqlJoin {
         public readonly ISqlValue<bool> condition;
+        public readonly Type table;
 
-        public SqlJoin(ISqlValue<bool> condition)
+        public SqlJoin(ISqlValue<bool> condition, Type table)
         {
             this.condition = condition ?? throw new ArgumentNullException(nameof(condition));
+            this.table = table ?? throw new ArgumentNullException(nameof(table));
         }
     }
 
@@ -145,9 +154,9 @@ namespace ORM
     public class CountOperator : ISqlNumericValue
     {
 
-        readonly SqlCollection<ISqlCode> primary;
+        readonly SqlCollection primary;
 
-        public CountOperator(SqlCollection<ISqlCode> primary)
+        public CountOperator(SqlCollection primary)
         {
             this.primary = primary ?? throw new ArgumentNullException(nameof(primary));
         }
