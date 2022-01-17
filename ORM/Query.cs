@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace ORM
@@ -62,55 +63,82 @@ namespace ORM
         }
     }
 
-    public class QueryCanExecute<T> { 
-    
-    }
-
-    public class QueryCanSelect<TTableSet> 
+    public class QueryCanExecute<T>
     {
-        internal readonly TTableSet tableSet;
+        private readonly QueryModel queryModel;
 
-        public QueryCanSelect(TTableSet tableSet)
+        internal QueryCanExecute(QueryModel queryModel)
         {
-            this.tableSet = tableSet;
-        }
-
-
-        public QueryCanExecute<T> Select<T>(Func<TTableSet, T> select)
-        {
-
+            this.queryModel = queryModel ?? throw new ArgumentNullException(nameof(queryModel));
         }
     }
 
-    public class QueryCanOrderBy<TTableSet> : QueryCanSelect<TTableSet>
+    public class QueryCanSelect<TJoinedTables> 
     {
-        public QueryCanOrderBy(TTableSet tableSet) : base(tableSet)
+        internal readonly TJoinedTables joinedTabls;
+        internal readonly QueryModel queryModel;
+
+        internal QueryCanSelect(TJoinedTables joinedTabls, QueryModel queryModel)
+        {
+            this.joinedTabls = joinedTabls;
+            this.queryModel = queryModel ?? throw new ArgumentNullException(nameof(queryModel));
+        }
+
+
+        public QueryCanExecute<T> Select<T>(Func<TJoinedTables, T> select)
+        {
+            var result = select(joinedTabls);
+
+            var copy = queryModel.Copy();
+
+            copy.select = typeof(T).GetProperties()
+                .Where(prop => prop.CanRead && typeof(ISqlValue).IsAssignableFrom(prop.PropertyType))
+                .Select(prop => (ISqlValue)prop.GetValue(result))
+                .ToArray();
+
+            return new QueryCanExecute<T>(copy);
+        }
+    }
+
+    public class QueryCanOrderBy<TJoinedTables> : QueryCanSelect<TJoinedTables>
+    {
+        internal QueryCanOrderBy(TJoinedTables joinedTabls, QueryModel queryModel) : base(joinedTabls, queryModel)
         {
         }
 
 
-        public QueryCanSelect<TTableSet> OderBy(params Func<TTableSet, SqlOrder>[] orderBys)
+        public QueryCanSelect<TJoinedTables> OderBy(params Func<TJoinedTables, SqlOrder>[] orderBys)
         {
+            var result = orderBys.Select(element => element(joinedTabls)).ToArray();
 
+            var copy = queryModel.Copy();
+            copy.ordersBy = result;
+
+            return new QueryCanSelect<TJoinedTables>(joinedTabls, copy);
         }
 
     }
 
-    public class QueryCanHaving<TTableSet> : QueryCanOrderBy<TTableSet>
+    public class QueryCanHaving<TJoinedTables> : QueryCanOrderBy<TJoinedTables>
     {
-        public QueryCanHaving(TTableSet tableSet) : base(tableSet)
+        internal QueryCanHaving(TJoinedTables joinedTabls, QueryModel queryModel) : base(joinedTabls, queryModel)
         {
         }
 
-        public QueryCanGroupBy<TTableSet> Having(params Func<TTableSet, ISqlValue<bool>>[] orderBys)
+        public QueryCanGroupBy<TJoinedTables> Having(Func<TJoinedTables, ISqlValue<bool>> having)
         {
+            var result = having(joinedTabls);
 
+            var copy = queryModel.Copy();
+            copy.having = result;
+
+            return new QueryCanGroupBy<TJoinedTables>(joinedTabls, copy);
         }
     }
 
-    public class QueryCanGroupBy<TTableSet> : QueryCanOrderBy<TTableSet>
+    public class QueryCanGroupBy<TJoinedTables> : QueryCanOrderBy<TJoinedTables>
     {
-        public QueryCanGroupBy(TTableSet tableSet) : base(tableSet)
+        internal QueryCanGroupBy(TJoinedTables joinedTabls, QueryModel queryModel) : base(joinedTabls, queryModel)
         {
         }
 
@@ -119,110 +147,82 @@ namespace ORM
 
     public static class QueryCabGroupByExtension {
 
-        public static QueryCanHaving<GroupedTableSet<TKey, T1>> GroupBy<T1, TKey>(this QueryCanGroupBy<TableSet<T1>> target,Func<TableSet<T1>, TKey> condition)
+        public static QueryCanHaving<GroupedJoinedTables<TKey, T1>> GroupBy<T1, TKey>(this QueryCanGroupBy<JoinedTables<T1>> target,Func<JoinedTables<T1>, TKey> condition)
         {
-            return new QueryCanHaving<GroupedTableSet<TKey, T1>>(target.tableSet.Group(x => condition(x)));
+            var result = condition(target.joinedTabls);
+            var copy = target.queryModel.Copy();
+            copy.groupBy = typeof(TKey).GetProperties()
+                 .Where(prop => prop.CanRead && typeof(ISqlValue).IsAssignableFrom(prop.PropertyType))
+                 .Select(prop => (ISqlValue)prop.GetValue(result))
+                 .ToArray();
+            return new QueryCanHaving<GroupedJoinedTables<TKey, T1>>(target.joinedTabls.Group(result), copy);
         }
 
-        public static QueryCanHaving<GroupedTableSet<TKey, T1, T2>> GroupBy<T1, T2, TKey>(this QueryCanGroupBy<TableSet<T1, T2>> target, Func<TableSet<T1, T2>, TKey> condition)
+        public static QueryCanHaving<GroupedJoinedTables<TKey, T1, T2>> GroupBy<T1, T2, TKey>(this QueryCanGroupBy<JoinedTables<T1, T2>> target, Func<JoinedTables<T1, T2>, TKey> condition)
         {
-            return new QueryCanHaving<GroupedTableSet<TKey, T1, T2>>(target.tableSet.Group(x => condition(x)));
+            var result = condition(target.joinedTabls);
+            var copy = target.queryModel.Copy();
+            copy.groupBy = typeof(TKey).GetProperties()
+                 .Where(prop => prop.CanRead && typeof(ISqlValue).IsAssignableFrom(prop.PropertyType))
+                 .Select(prop => (ISqlValue)prop.GetValue(result))
+                 .ToArray();
+            return new QueryCanHaving<GroupedJoinedTables<TKey, T1, T2>>(target.joinedTabls.Group(result), copy);
         }
     }
 
-    public class QueryCanWhere<TTableSet> : QueryCanGroupBy<TTableSet> {
-        public QueryCanWhere(TTableSet tableSet) : base(tableSet)
+    public class QueryCanWhere<TJoinedTables> : QueryCanGroupBy<TJoinedTables> {
+        internal QueryCanWhere(TJoinedTables joinedTabls, QueryModel queryModel) : base(joinedTabls, queryModel)
         {
         }
 
-        public QueryCanGroupBy<TTableSet> Where(Func<TTableSet, ISqlValue<bool>> condition)
+        public QueryCanGroupBy<TJoinedTables> Where(Func<TJoinedTables, ISqlValue<bool>> condition)
         {
+            var result = condition(joinedTabls);
 
+            var copy = queryModel.Copy();
+            copy.where = result;
+
+            return new QueryCanGroupBy<TJoinedTables>(joinedTabls, copy);
         }
     }
 
     public class Query {
 
         public static Query<T1> From<T1>()
+            where T1 : new()
         {
-
+            return new Query<T1>(new JoinedTables<T1>(new T1()),new QueryModel());
         }
     }
 
-    public class Query<T1> : QueryCanWhere<TableSet<T1>>
+    public class Query<T1> : QueryCanWhere<JoinedTables<T1>>
     {
 
-        public Query(TableSet<T1> tableSet) : base(tableSet)
+        internal Query(JoinedTables<T1> joinedTabls, QueryModel queryModel) : base(joinedTabls, queryModel)
         {
         }
 
-        public Query<T1, T2> Join<T2>(Func<TableSet<T1, T2>, ISqlValue<bool>> condition)
+        public Query<T1, T2> Join<T2>(Func<JoinedTables<T1, T2>, ISqlValue<bool>> condition)
+            where T2: new ()
         {
-            return new Query<T1,T2>(tableSet.Join<T2>(x=>condition(x)));
+            var nextTableSet = joinedTabls.Join<T2>();
+            var result = condition(nextTableSet);
+
+            var copy = queryModel.Copy();
+            var nextJoins = copy.joins.ToList();
+            nextJoins.Add(new SqlJoin(result));
+            copy.joins = nextJoins.ToArray();
+
+            return new Query<T1,T2>(nextTableSet, copy);
         }
     }
 
-    public class Query<T1, T2> : QueryCanWhere<TableSet<T1, T2>>
+    public class Query<T1, T2> : QueryCanWhere<JoinedTables<T1, T2>>
     {
-        
-        public Query(TableSet<T1, T2> tableSet) : base(tableSet)
+        internal Query(JoinedTables<T1, T2> joinedTabls, QueryModel queryModel) : base(joinedTabls, queryModel)
         {
         }
     }
-
-    //public class QueryJoining<T1,T2> : Query<TableSet<T1,T2>>, ICanJoin, ICanWhere, ICanGroupBy, ICanHaving, ICanOrderBy, ICanSelect { 
-
-    //}
-
-    //public class QueryPostJoin<TTableSet> : Query<TTableSet>,  ICanWhere, ICanGroupBy, ICanHaving, ICanOrderBy, ICanSelect
-    //{
-    //}
-
-    //public class PostWhere<TTableSet> : Query<TTableSet>,  ICanGroupBy, ICanHaving, ICanOrderBy, ICanSelect
-    //{
-
-    //}
-
-    //public class PostGroupBy<TTableSet> : Query<TTableSet>, ICanHaving, ICanOrderBy, ICanSelect
-    //{
-
-    //}
-
-    //public class PostHaving<TTableSet> : Query<TableSet>, ICanOrderBy, ICanSelect
-    //{
-
-    //}
-
-    //public class PostOrderBy<TTableSet> : Query<TTableSet>, ICanSelect
-    //{
-
-    //}
-
-    // maybe I should be less strict
-    // I should allow abritray grouping and filtering in any order
-    // it will just generate the nested queries for you?
-
-    //public interface ICanJoin { }
-    //public interface ICanWhere { }
-    //public interface ICanGroupBy { }
-    //public interface ICanHaving { }
-    //public interface ICanOrderBy { }
-    //public interface ICanSelect { }
-
-    //public static class QueryExtensions {
-
-
-
-
-    //    // but this doesn't work
-    //    // how do you use ungrouped columns
-    //    //public static PostGroupBy<GroupedTableSet<TResultTable, T>> GroupBy<T, TTableSet, TResultTable>(this T target, Func<TTableSet, TResultTable> condition)
-    //    //    where T : Query<TTableSet>, ICanGroupBy
-    //    //    where TTableSet : TableSet
-    //    //{
-
-    //    //}
-    //}
 
     public interface ITableSetContains<T> {
         T Get();
@@ -240,50 +240,32 @@ namespace ORM
         public static SqlTableCollection<T> Get<T>(this ITableSetCollection<T> target) => target.Get();
     }
 
-    public class TableSet {
-        //private readonly IReadOnlyDictionary<Type, object> map;
+    public class JoinedTables {}
 
-        //public TableSet(IReadOnlyDictionary<Type, object> map)
-        //{
-        //    this.map = map;
-        //}
-
-        //public bool TryGet<T>(out T res) {
-        //    if ( map.TryGetValue(typeof(T), out var innerRes))
-        //    {
-        //        res = (T)innerRes;
-        //        return true;
-        //    }
-        //    res = default;
-        //    return false;
-        //}
-    }
-
-    public class TableSet<T1> : TableSet, ITableSetContains<T1>
+    public class JoinedTables<T1> : JoinedTables, ITableSetContains<T1>
     {
         private readonly T1 t1;
 
-        public TableSet(T1 t1)
+        public JoinedTables(T1 t1)
         {
             this.t1 = t1;
         }
 
-        internal TableSet<T1, T2> Join<T2>(Func<TableSet<T1, T2>, ISqlValue<bool>> condition) { 
-        
+        internal JoinedTables<T1, T2> Join<T2>()
+            where T2 : new()
+        {
+            return new JoinedTables<T1, T2>(t1, new T2());
         }
 
-        internal GroupedTableSet<TKey, T1> Group<TKey>(Func<TableSet<T1>, TKey> group) { 
-        
-        }
-
+        internal GroupedJoinedTables<TKey, T1> Group<TKey>(TKey group) =>new GroupedJoinedTables<TKey, T1>(group, new SqlTableCollection<T1>(t1));
         T1 ITableSetContains<T1>.Get() => t1;
     }
 
-    public class TableSet<T1, T2> : TableSet<T1> , ITableSetContains<T2>
+    public class JoinedTables<T1, T2> : JoinedTables<T1> , ITableSetContains<T2>
     {
         private readonly T2 t2;
 
-        public TableSet(T1 t1,T2 t2) : base(t1)
+        public JoinedTables(T1 t1,T2 t2) : base(t1)
         {
             this.t2 = t2;
         }
@@ -293,26 +275,45 @@ namespace ORM
 
     // this is a bit weird columns show up in the key and the collections, you shouldn't access a key that is in the grouping as a collection 
     // can you layer groups? yeah, I think you just need to put a select between each group
-    public class GroupedTableSet<TKey, T1>: ITableSetContains<TKey>, ITableSetCollection<T1>
+    public class GroupedJoinedTables<TKey, T1>: ITableSetContains<TKey>, ITableSetCollection<T1>
     {
         private readonly TKey tkey;
         private readonly SqlTableCollection<T1> t1;
+
+        public GroupedJoinedTables(TKey tkey, SqlTableCollection<T1> t1)
+        {
+            this.tkey = tkey;
+            this.t1 = t1 ?? throw new ArgumentNullException(nameof(t1));
+        }
 
         TKey ITableSetContains<TKey>.Get() => tkey;
         SqlTableCollection<T1> ITableSetCollection<T1>.Get() => t1;
     }
 
-    public class GroupedTableSet<TKey, T1, T2> : GroupedTableSet<TKey, T1>, ITableSetCollection<T2>
+    public class GroupedJoinedTables<TKey, T1, T2> : GroupedJoinedTables<TKey, T1>, ITableSetCollection<T2>
     {
 
         private readonly SqlTableCollection<T2> t2;
+
+        public GroupedJoinedTables(TKey tkey, SqlTableCollection<T1> t1, SqlTableCollection<T2> t2) : base(tkey, t1)
+        {
+            this.t2 = t2 ?? throw new ArgumentNullException(nameof(t2));
+        }
+
         SqlTableCollection<T2> ITableSetCollection<T2>.Get() => t2;
     }
 
 
     //public class SqlBool { }
     public class SqlTableCollection<T> {
-        public SqlCollection<T1> Get<T1>(Func<T, T1> getter) { }
+        private T t;
+
+        public SqlTableCollection(T t)
+        {
+            this.t = t;
+        }
+
+        public SqlCollection<T1> Get<T1>(Func<T, T1> getter) where T1 : ISqlCode => new SqlCollection<T1>(getter(t));
     }
 
     //public interface ISqlCollection<out T> : ISqlCode
@@ -330,6 +331,11 @@ namespace ORM
         where T: ISqlCode
     {
         private readonly T inner;
+
+        public SqlCollection(T inner)
+        {
+            this.inner = inner;
+        }
 
         public override string ToCode() => inner.ToCode();
     }

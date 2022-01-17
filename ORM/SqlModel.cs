@@ -8,9 +8,27 @@ namespace ORM
     {
     }
 
-    class QueryModel { 
-    
-    
+    class QueryModel {
+        public ISqlTable from;
+        public SqlJoin[] joins;
+        public ISqlValue<bool> where;
+        public ISqlValue[] groupBy;
+        public ISqlValue<bool> having;
+        public SqlOrder[] ordersBy;
+        public ISqlValue[] select;
+
+        public QueryModel Copy() { 
+        
+        }
+    }
+
+    class SqlJoin {
+        public readonly ISqlValue<bool> condition;
+
+        public SqlJoin(ISqlValue<bool> condition)
+        {
+            this.condition = condition ?? throw new ArgumentNullException(nameof(condition));
+        }
     }
 
     // equals
@@ -127,9 +145,9 @@ namespace ORM
     public class CountOperator : ISqlNumericValue
     {
 
-        readonly ISqlCollection<ISqlCode> primary;
+        readonly SqlCollection<ISqlCode> primary;
 
-        public CountOperator(ISqlCollection<ISqlCode> primary)
+        public CountOperator(SqlCollection<ISqlCode> primary)
         {
             this.primary = primary ?? throw new ArgumentNullException(nameof(primary));
         }
