@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Prototypist.Toolbox;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.SqlClient;
@@ -51,30 +52,77 @@ namespace ORM
         {
             return column1.NotEqual(column2);
         }
+
     }
 
     public class Column<T>: Column
     {
         public T value;
+
+        public static OrmBool operator >(Column<T> column1, double column2)
+        {
+            return new OrmBool
+            {
+                text = $" {((IColumnWithMetadata)column1).Combine()} > {column2}"
+            };
+        }
+
+        public static OrmBool operator <(Column<T> column1, double column2)
+        {
+            return new OrmBool
+            {
+                text = $" {((IColumnWithMetadata)column1).Combine()} < {column2}"
+            };
+        }
     }
+
+    public static class ColumnExtension
+    {
+        public static Column<int> Sum(this Column<int> self) {
+            var res = new ColumnWithMetadata<int>();
+            ((IColumnWithMetadata)res).Aggregation = "SUM";
+            ((IColumnWithMetadata)res).Name = ((IColumnWithMetadata)self).Name;
+            ((IColumnWithMetadata)res).row = ((IColumnWithMetadata)self).row;
+            return res;
+        }
+    } 
 
     internal interface IColumnWithMetadata {
         Row row { get; set; }
         string Name{ get; set; }
+        string Aggregation { get; set; }
+
+    }
+
+
+    public static class ColumnWithMetadataExtensions
+    {
+        internal static string Combine(this IColumnWithMetadata self) {
+            if (self.Aggregation == null)
+            {
+                return self.row.alias + "." + self.Name;
+            }
+            else {
+                return self.Aggregation + "(" + self.row.alias + "." + self.Name + ")";
+            }
+        }
+
     }
 
     // this could be in a dict off field data 
-    public class ColumnWithMetadata<T>: Column<T>, IColumnWithMetadata
+    internal class ColumnWithMetadata<T>: Column<T>, IColumnWithMetadata
     {
         Row IColumnWithMetadata.row { get; set; }
         string IColumnWithMetadata.Name { get; set; }
+        string IColumnWithMetadata.Aggregation { get; set; }
     }
 
+    public interface IGroupedColumn { 
+    } 
 
     internal class Row {
         public string from;
         public string alias;
-        public List<IColumnWithMetadata> columns;
 
         public static Row<T> Build<T>(T sample, Func<string> aliasSrouce)
         {
@@ -84,8 +132,9 @@ namespace ORM
         public static Row<T> Build<T>(Func<string> aliasSrouce)
         {
             Func<System.Reflection.FieldInfo, string> nameSource = (field) =>field.Name;
+            Func<System.Reflection.FieldInfo, string> aggregateSource = (field) => null;
 
-            return NewMethod<T>(nameSource, aliasSrouce, typeof(T).Name);
+            return NewMethod<T>(nameSource, aliasSrouce, typeof(T).Name, aggregateSource);
         }
 
         public static Row<T> Build<T>(T sample ,Func<string> aliasSrouce, string from)
@@ -96,10 +145,15 @@ namespace ORM
                 return value?.Name ?? field.Name;
             };
 
-            return NewMethod<T>(nameSource, aliasSrouce, from);
+            Func<System.Reflection.FieldInfo, string> aggregateSource = (field) =>
+            {
+                return ((IColumnWithMetadata)field.GetValue(sample)).Aggregation;
+            };
+
+            return NewMethod<T>(nameSource, aliasSrouce, from, aggregateSource);
         }
 
-        private static Row<T> NewMethod<T>(Func<System.Reflection.FieldInfo, string> nameSource, Func<string> aliasSrouce, string from)
+        private static Row<T> NewMethod<T>(Func<System.Reflection.FieldInfo, string> nameSource, Func<string> aliasSrouce, string from, Func<System.Reflection.FieldInfo, string> aggregateSource)
         {
             var res = (Row<T>)Activator.CreateInstance(typeof(Row<T>));
             res.pocoRow = (T)Activator.CreateInstance(typeof(T));
@@ -107,7 +161,6 @@ namespace ORM
             res.alias = aliasSrouce();
             res.from = from;
 
-            res.columns = new List<IColumnWithMetadata>();
             foreach (var field in res.pocoRow.GetType().GetFields()
                 .Where(x => typeof(Column).IsAssignableFrom(x.FieldType)))
             {
@@ -115,20 +168,71 @@ namespace ORM
                 
                 newColum.Name = nameSource(field); 
                 newColum.row = res;
+                newColum.Aggregation = aggregateSource(field);
                 // we need to box our tuple so the change sticks
                 // https://stackoverflow.com/questions/59000557/valuetuple-set-fields-via-reflection
                 object obj = (object)res.pocoRow;
                 field.SetValue(obj, newColum);
                 // and then unbox it
                 res.pocoRow = (T)obj;
-                res.columns.Add(newColum);
             }
+
+            //foreach (var field in res.pocoRow.GetType().GetFields()
+            //    .Where(x => typeof(Aggregation).IsAssignableFrom(x.FieldType)))
+            //{
+
+            //    var sampleAggregation = aggregateSource(field);
+            //    //var newAggregation = (Aggregation)Activator.CreateInstance(sampleAggregation.GetType());
+
+
+            //    //newAggregation.column = sampleAggregation.column;// (IColumnWithMetadata)Activator.CreateInstance(sampleAggregation.column.GetType());
+            //    //newAggregation.aggregate = sampleAggregation.aggregate;
+
+            //    //newAggregation.column.Name = nameSource(field);
+            //    //newAggregation.column.row = res;
+            //    // we need to box our tuple so the change sticks
+            //    // https://stackoverflow.com/questions/59000557/valuetuple-set-fields-via-reflection
+            //    object obj = (object)res.pocoRow;
+            //    field.SetValue(obj, sampleAggregation);
+            //    // and then unbox it
+            //    res.pocoRow = (T)obj;
+            //}
+
             return res;
         }
     }
 
     internal class Row<T> : Row{
         public T pocoRow;
+    }
+
+
+    public class GroupedSelectedResult<T> : SelectResult<T> where T : new() {
+
+        public GroupedSelectedResult<T> Having(Func<T, OrmBool> having) {
+
+            Statement.having = having(Poco);
+
+            return this;
+        }
+
+        public SelectResult<T2> Select<T2>(Func<T, T2> transform) where T2 : new()
+        {
+            var obj = transform(row.pocoRow);
+
+            Statement.toSelect = obj.GetType().GetFields()
+                .Where(x => typeof(Column).IsAssignableFrom(x.FieldType))
+                .Select(x => x.GetValue(obj))
+                .OfType<IColumnWithMetadata>()
+                .ToArray();
+
+            return new SelectResult<T2>
+            {
+                row = Row.Build<T2>(obj, Statement.GetAlias, $"({Statement.Compile()})"),
+                Statement = Statement
+            };
+        }
+
     }
 
     public class SelectResult<T> where T : new()
@@ -291,7 +395,7 @@ namespace ORM
             statement.toSelect = obj.GetType().GetFields()
                 .Where(x => typeof(Column).IsAssignableFrom(x.FieldType))
                 .Select(x => x.GetValue(obj))
-                .OfType<Column>()
+                .OfType<IColumnWithMetadata>()
                 .ToArray();
 
             return new SelectResult<T>
@@ -321,7 +425,7 @@ namespace ORM
             statement.toSelect = obj.GetType().GetFields()
                 .Where(x => typeof(Column).IsAssignableFrom(x.FieldType))
                 .Select(x => x.GetValue(obj))
-                .OfType<Column>()
+                .OfType<IColumnWithMetadata>()
                 .ToArray();
 
             return new SelectResult<T> { 
@@ -330,22 +434,69 @@ namespace ORM
             };
         }
 
-        public From<Row1, Row2> GroupBy(Func<Row1, Row2, OrmBool> transfrom)
+        //public From<Row1, Row2> GroupBy(Func<Row1, Row2, OrmBool> transfrom)
+        //{
+
+        //    statement.having = transfrom(row1, row2);
+
+        //    return this;
+        //}
+        //public From<Row1, Row2> GroupBy(Func<Row1, Row2, Column[]> transfrom) {
+
+        //    statement.groupBy = transfrom(row1, row2);
+
+        //    return this;
+
+        //}
+
+
+        public GroupedSelectedResult<T> GroupedSelect<T>(Func<Row1, Row2, T> group) where T : new()
         {
 
-            statement.having = transfrom(row1, row2);
+            var obj = group(row1, row2);
 
-            return this;
+            statement.groupBy = obj.GetType().GetFields()
+                .Where(x => typeof(Column).IsAssignableFrom(x.FieldType))
+                .Select(x => x.GetValue(obj))
+                .OfType<IColumnWithMetadata>()
+                .Where(x=>x.Aggregation == null)
+                .ToArray();
 
-        }
-        public From<Row1, Row2> GroupBy(Func<Row1, Row2, Column[]> transfrom) {
 
-            statement.groupBy = transfrom(row1, row2);
+            statement.toSelect = obj.GetType().GetFields()
+                .Where(x => typeof(Column).IsAssignableFrom(x.FieldType))
+                .Select(x => x.GetValue(obj))
+                .OfType<IColumnWithMetadata>()
+                .ToArray();
 
-            return this;
+            //list.AddRange(obj.GetType().GetFields()
+            //    .Where(x => typeof(Aggregation).IsAssignableFrom(x.FieldType))
+            //    .Select(x => x.GetValue(obj))
+            //    .OfType<Aggregation>()
+            //    .Select(x => OrType.Make<IColumnWithMetadata, Aggregation>(x))
+            //    .ToArray());
 
+            // = list.ToArray();
+
+            return new GroupedSelectedResult<T>
+            {
+                row = Row.Build<T>(obj, statement.GetAlias),
+                Statement = statement
+            };
         }
     }
+
+    //public class Aggregation { 
+    //    internal string aggregate;
+    //    internal IColumnWithMetadata column;
+
+    //}
+
+    //public class AggregationDoulbe: Aggregation
+    //{
+
+
+    //}
 
     //public class Grouped<T>
     //{
@@ -380,13 +531,15 @@ namespace ORM
     public class SelectBuilder {
         internal Row BaseEntity;
         internal List<(Row row, OrmBool joinStatement)> joins = new List<(Row row, OrmBool joinStatement)>();
-        internal Column[] toSelect;
+        internal IColumnWithMetadata[] toSelect;
         internal OrmBool where;
-        internal Column[] groupBy;
+        internal IColumnWithMetadata[] groupBy;
         internal OrmBool having;
         //List<Column> ToOrderBy;
         public string Compile() {
-            var res = $"select {String.Join(", ", toSelect.Select(x => (x as IColumnWithMetadata).row.alias + "." + (x as IColumnWithMetadata).Name))} from {BaseEntity.from} {BaseEntity.alias}{Environment.NewLine}";
+            var res = @$"
+select {String.Join(", ", toSelect.Select(x=>x.Combine()))} 
+from {BaseEntity.from} {BaseEntity.alias}{Environment.NewLine}";
 
             foreach (var join in joins)
             {
@@ -398,12 +551,12 @@ namespace ORM
             }
 
             if (groupBy != null) {
-                res += $"group by  {String.Join(", ", groupBy.Select(x => (x as IColumnWithMetadata).row.alias + "." + (x as IColumnWithMetadata).Name))}{Environment.NewLine}";
+                res += $"group by  {String.Join(", ", groupBy.Select(x => x.row.alias + "." + x.Name))}{Environment.NewLine}";
             }
 
             if (having != null)
             {
-                res += $"where {having.text}{Environment.NewLine}";
+                res += $"having {having.text}{Environment.NewLine}";
             }
 
             return res;

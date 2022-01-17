@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Xunit;
 
 namespace ORM.Test
@@ -16,11 +17,11 @@ namespace ORM.Test
         {
             public Column<int> OrderId;
             public Column<int> CustomerId;
+            public Column<int> OrderQuantity;
         }
 
         class OrderWigit 
         {
-
             public Column<int> OrderId;
             public Column<int> WigitId;
         }
@@ -38,6 +39,12 @@ namespace ORM.Test
             .Join<Order>((c, o) => c.CustomerId == o.CustomerId)
             .Select((c, o) => (c.CustomerName, o.OrderId))
             .Statement.Compile();
+
+            Assert.Equal(@"
+select a.CustomerName, b.OrderId 
+from Customer a
+inner join Order b on  a.CustomerId = b.CustomerId
+", x);
         }
 
         [Fact]
@@ -50,6 +57,15 @@ namespace ORM.Test
                 (c, o) => c.CustomerId.Equal(o.CustomerId))
             .Select((c, o) => (c.CustomerName, o.OrderId))
             .Statement.Compile();
+
+            Assert.Equal(@"
+select a.CustomerName, b.OrderId 
+from Customer a
+inner join (
+select a.CustomerId, a.OrderId 
+from Order a
+) b on  a.CustomerId = b.CustomerId
+", x);
         }
 
         [Fact]
@@ -58,9 +74,20 @@ namespace ORM.Test
             var x =
             From<Customer>
             .Join<Order>((c, o) => c.CustomerId == o.CustomerId)
-            .GroupBy((c,o)=> new Column[] { c.CustomerName, o.OrderId })
-            .Select((c,o) => (c.CustomerName, o.OrderId))
+            .GroupedSelect((c,o)=> ( c.CustomerName, orderSum: o.OrderQuantity.Sum()))
+            .Having((x)=>x.orderSum > 10)
+            //.Select((c,o) => (c.CustomerName, o.OrderId))
             .Statement.Compile();
+
+            
+
+            Assert.Equal(@"
+select a.CustomerName, SUM(b.OrderQuantity) 
+from Customer a
+inner join Order b on  a.CustomerId = b.CustomerId
+group by  a.CustomerName
+having  SUM(c.OrderQuantity) > 10
+", x);
         }
 
 
@@ -73,6 +100,15 @@ namespace ORM.Test
             .LeftJoin<Customer>((o,c) => c.CustomerId.Equal(o.CustomerId))
             .Select((o, c) => (c.CustomerName, o.OrderId))
             .Statement.Compile();
+
+            Assert.Equal(@"
+select a.CustomerName, b.OrderId 
+from Customer a
+inner join (
+select a.CustomerId, a.OrderId 
+from Order a
+) b on  a.CustomerId = b.CustomerId
+", x);
         }
 
     }

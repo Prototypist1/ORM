@@ -1,0 +1,7 @@
+﻿// could I take the simple class like Student{ int studentId; } and JIT the column versions StudentWithCoumns{ column<int> studentId; }
+// I don't think that works tho stuff like the delegate in:
+// .Where((a,b)=>a.id.Equals(b.id))
+// take Student's not StudentWithCoumns
+
+
+// I might be able to do like entity framework thing where I extend the class? Nope. annonomus types are sealed. 
