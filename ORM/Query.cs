@@ -196,7 +196,7 @@ FROM {queryModel.from.GetType().Name}";
         {
         }
 
-        public QueryCanGroupBy<TJoinedTables> Where(Func<TJoinedTables, ISqlValue<bool>> condition)
+        public QueryCanGroupBy<TJoinedTables> InnerWhere(Func<TJoinedTables, ISqlValue<bool>> condition)
         {
             var result = condition(joinedTabls);
 
@@ -205,6 +205,19 @@ FROM {queryModel.from.GetType().Name}";
 
             return new QueryCanGroupBy<TJoinedTables>(joinedTabls, copy);
         }
+    }
+
+    public static class QueryCanWhereExtensions {
+        public static QueryCanGroupBy<TJoinedTables> Where<TJoinedTables, T1>(this QueryCanWhere<TJoinedTables> self, Func<T1, ISqlValue<bool>> condition)
+            where TJoinedTables : ITableSetContains<T1>
+        {
+            return self.InnerWhere(x => condition(x.Get<T1>()));
+        }
+        public static QueryCanGroupBy<TJoinedTables> Where<TJoinedTables, T1, T2>(this QueryCanWhere<TJoinedTables>  self, Func<T1, T2, ISqlValue<bool>> condition)
+            where TJoinedTables : ITableSetContains<T1>, ITableSetContains<T2>
+        {
+            return self.InnerWhere(x=> condition(x.Get<T1>(), x.Get<T2>()));
+        } 
     }
 
     public class Query {
@@ -336,7 +349,7 @@ FROM {queryModel.from.GetType().Name}";
             this.t = t;
         }
 
-        public SqlCollection<T1> Get<T1>(Func<T, T1> getter) where T1 : ISqlCode => new SqlCollection<T1>(getter(t));
+        public SqlCollection<T1> Select<T1>(Func<T, T1> getter) where T1 : ISqlCode => new SqlCollection<T1>(getter(t));
     }
 
     //public interface ISqlCollection<out T> : ISqlCode

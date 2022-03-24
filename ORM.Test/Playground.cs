@@ -27,11 +27,11 @@ namespace ORM.Test
             
             var test = Query.From<Student>()
                  .Join<ClassSessionStudend>(x => x.Get<Student>().Id.IsEquals(x.Get<ClassSessionStudend>().SudentId))
-                 .Where(x => x.Get<Student>().Id.IsEquals(new IntSqlConstant(5)))
+                 .Where((Student student) => student.Id.IsEquals(new IntSqlConstant(5)))
                  .GroupBy(x => new { StudentId = x.Get<Student>().Id })
-                 .Having(x => x.Get<ClassSessionStudend>().Get(y => y.ClassSessionId).Count().IsGreater(new IntSqlConstant(5)))
-                 .OderBy(x => x.Get<ClassSessionStudend>().Get(y => y.ClassSessionId).Count()) // 😰 I can't pull from the grouping here, I could just do something like x.Key
-                 .Select(x => new { classesAttended = x.Get<ClassSessionStudend>().Get(y => y.ClassSessionId).Count() })
+                 .Having(x => x.Get<ClassSessionStudend>().Select(y => y.ClassSessionId).Count().IsGreater(new IntSqlConstant(5)))
+                 .OderBy(x => x.Get<ClassSessionStudend>().Select(y => y.ClassSessionId).Count()) // 😰 I can't pull from the grouping here, I could just do something like x.Key
+                 .Select(x => new { classesAttended = x.Get<ClassSessionStudend>().Select(y => y.ClassSessionId).Count() })
                  .ToCode();
 
             var db = 0;
